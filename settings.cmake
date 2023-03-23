@@ -133,6 +133,12 @@ if(NOT Sel4benchAllowSettingsOverride)
         set(AppIrqBench OFF CACHE BOOL "" FORCE)
     endif()
 
+    if(IRQCOLD)
+        set(AppIrqCOLDBench ON CACHE BOOL "" FORCE)
+    else()
+        set(AppIrqCOLDBench OFF CACHE BOOL "" FORCE)
+    endif()
+
     if(IRQUSER)
         set(AppIrqUserBench ON CACHE BOOL "" FORCE)
     else()
