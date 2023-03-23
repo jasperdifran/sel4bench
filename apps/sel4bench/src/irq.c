@@ -204,7 +204,7 @@ static json_t *irqcold_process(void *r)
 
 static benchmark_t irqcold_benchmark = {
     .name = "irqcold",
-    .enabled = config_set(CONFIG_APP_irqcoldBENCH),
+    .enabled = config_set(CONFIG_APP_IRQCOLDBENCH),
     .results_pages = BYTES_TO_SIZE_BITS_PAGES(sizeof(irqcold_results_t), seL4_PageBits),
     .process = irqcold_process,
     .init = blank_init

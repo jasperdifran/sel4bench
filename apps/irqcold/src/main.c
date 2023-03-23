@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <autoconf.h>
-#include <sel4benchirquser/gen_config.h>
+#include <sel4benchirqcold/gen_config.h>
 #include <stdio.h>
 #include <sel4runtime.h>
 #include <muslcsys/vsyscall.h>
@@ -208,7 +208,7 @@ int main(int argc, char **argv)
 
         // seL4_DebugDumpScheduler();
 
-        benchmark_wait_children(endpoint.cptr, "child of irq-user", 1);
+        benchmark_wait_children(endpoint.cptr, "child of irq-cold", 1);
 
         // ZF_LOGE("Stopping ticker");
         error = seL4_TCB_Suspend(ticker.tcb.cptr);

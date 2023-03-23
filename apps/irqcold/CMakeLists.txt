@@ -10,8 +10,8 @@ project(irqcold C)
 
 set(configure_string "")
 config_option(
-    AppIrqcoldBench
-    APP_IRQcoldBENCH
+    AppIrqColdBench
+    APP_IRQCOLDBENCH
     "Application to benchmark seL4 IRQs without modification to the kernel with a cold cache."
     DEFAULT
     ON
@@ -41,6 +41,6 @@ target_link_libraries(
     sel4debug
 )
 
-if(AppIrqcoldBench)
+if(AppIrqColdBench)
     set_property(GLOBAL APPEND PROPERTY sel4benchapps_property "$<TARGET_FILE:irqcold>")
 endif()
