@@ -10,7 +10,7 @@
 #include <hardware/gen_config.h>
 #include <sel4benchipc/gen_config.h>
 #include <sel4benchirq/gen_config.h>
-#include <sel4benchirquser/gen_config.h>
+#include <sel4benchirqcold/gen_config.h>
 #include <sel4benchirquser/gen_config.h>
 #include <sel4benchpagemapping/gen_config.h>
 #include <sel4benchscheduler/gen_config.h>
