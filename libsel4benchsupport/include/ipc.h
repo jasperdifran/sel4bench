@@ -14,10 +14,10 @@
 enum overheads {
     CALL_OVERHEAD,
     REPLY_RECV_OVERHEAD,
-    SEND_OVERHEAD,
-    RECV_OVERHEAD,
-    CALL_10_OVERHEAD,
-    REPLY_RECV_10_OVERHEAD,
+    // SEND_OVERHEAD,
+    // RECV_OVERHEAD,
+    // CALL_10_OVERHEAD,
+    // REPLY_RECV_10_OVERHEAD,
     /******/
     NUM_OVERHEAD_BENCHMARKS
 };
@@ -32,14 +32,14 @@ typedef enum dir {
 typedef enum {
     IPC_CALL_FUNC = 0,
     IPC_CALL_FUNC2 = 1,
-    IPC_CALL_10_FUNC = 2,
-    IPC_CALL_10_FUNC2 = 3,
-    IPC_REPLYRECV_FUNC2 = 4,
-    IPC_REPLYRECV_FUNC = 5,
-    IPC_REPLYRECV_10_FUNC2 = 6,
-    IPC_REPLYRECV_10_FUNC = 7,
-    IPC_SEND_FUNC = 8,
-    IPC_RECV_FUNC = 9
+    // IPC_CALL_10_FUNC = 2,
+    // IPC_CALL_10_FUNC2 = 3,
+    IPC_REPLYRECV_FUNC2 = 2,
+    IPC_REPLYRECV_FUNC = 3,
+    // IPC_REPLYRECV_10_FUNC2 = 6,
+    // IPC_REPLYRECV_10_FUNC = 7,
+    // IPC_SEND_FUNC = 8,
+    // IPC_RECV_FUNC = 9
 } helper_func_id_t;
 
 typedef seL4_Word(*helper_func_t)(int argc, char *argv[]);
@@ -123,56 +123,58 @@ static const benchmark_params_t benchmark_params[] = {
         .passive = true,
     },
     /* Send slowpath (no fastpath for send) same prio client-server, different address space */
-    {
-        .name        = "seL4_Send",
-        .direction   = DIR_TO,
-        .client_fn   = IPC_SEND_FUNC,
-        .server_fn   = IPC_RECV_FUNC,
-        .same_vspace = false,
-        .client_prio = seL4_MaxPrio - 2,
-        .server_prio = seL4_MaxPrio - 1,
-        .length = 0,
-        .overhead_id = SEND_OVERHEAD
-    },
+    // {
+    //     .name        = "seL4_Send",
+    //     .direction   = DIR_TO,
+    //     .client_fn   = IPC_SEND_FUNC,
+    //     .server_fn   = IPC_RECV_FUNC,
+    //     .same_vspace = false,
+    //     .client_prio = seL4_MaxPrio - 2,
+    //     .server_prio = seL4_MaxPrio - 1,
+    //     .length = 0,
+    //     .overhead_id = SEND_OVERHEAD
+    // },
     /* Call slowpath, long IPC (10), same prio client to server, different address space */
-    {
-        .name        = "seL4_Call",
-        .direction   = DIR_TO,
-        .client_fn   = IPC_CALL_10_FUNC2,
-        .server_fn   = IPC_REPLYRECV_10_FUNC2,
-        .same_vspace = false,
-        .client_prio = seL4_MaxPrio - 1,
-        .server_prio = seL4_MaxPrio - 1,
-        .length = 10,
-        .overhead_id = CALL_10_OVERHEAD
-    },
-    /* ReplyRecv slowpath, long IPC (10), same prio server to client, on the slowpath, different address space */
-    {
-        .name        = "seL4_ReplyRecv",
-        .direction   = DIR_FROM,
-        .client_fn   = IPC_CALL_10_FUNC,
-        .server_fn   = IPC_REPLYRECV_10_FUNC,
-        .same_vspace = false,
-        .client_prio = seL4_MaxPrio - 1,
-        .server_prio = seL4_MaxPrio - 1,
-        .length = 10,
-        .overhead_id = REPLY_RECV_10_OVERHEAD
-    }
+    // {
+    //     .name        = "seL4_Call",
+    //     .direction   = DIR_TO,
+    //     .client_fn   = IPC_CALL_10_FUNC2,
+    //     .server_fn   = IPC_REPLYRECV_10_FUNC2,
+    //     .same_vspace = false,
+    //     .client_prio = seL4_MaxPrio - 1,
+    //     .server_prio = seL4_MaxPrio - 1,
+    //     .length = 10,
+    //     .overhead_id = CALL_10_OVERHEAD
+    // },
+    // /* ReplyRecv slowpath, long IPC (10), same prio server to client, on the slowpath, different address space */
+    // {
+    //     .name        = "seL4_ReplyRecv",
+    //     .direction   = DIR_FROM,
+    //     .client_fn   = IPC_CALL_10_FUNC,
+    //     .server_fn   = IPC_REPLYRECV_10_FUNC,
+    //     .same_vspace = false,
+    //     .client_prio = seL4_MaxPrio - 1,
+    //     .server_prio = seL4_MaxPrio - 1,
+    //     .length = 10,
+    //     .overhead_id = REPLY_RECV_10_OVERHEAD
+    // }
 };
 
 static const struct overhead_benchmark_params overhead_benchmark_params[] = {
     [CALL_OVERHEAD]          = {"call"},
     [REPLY_RECV_OVERHEAD]    = {"reply recv"},
-    [SEND_OVERHEAD]          = {"send"},
-    [RECV_OVERHEAD]          = {"recv"},
-    [CALL_10_OVERHEAD]       = {"call"},
-    [REPLY_RECV_10_OVERHEAD] = {"reply recv"},
+    // [SEND_OVERHEAD]          = {"send"},
+    // [RECV_OVERHEAD]          = {"recv"},
+    // [CALL_10_OVERHEAD]       = {"call"},
+    // [REPLY_RECV_10_OVERHEAD] = {"reply recv"},
 };
 
 typedef struct ipc_results {
     /* Raw results from benchmarking. These get checked for sanity */
     ccnt_t overhead_benchmarks[NUM_OVERHEAD_BENCHMARKS][RUNS];
     ccnt_t benchmarks[ARRAY_SIZE(benchmark_params)][RUNS];
+    // ccnt_t kernel_traces[ARRAY_SIZE(benchmark_params)][CONFIG_MAX_NUM_TRACE_POINTS][RUNS];
+    ccnt_t kernel_traces[CONFIG_MAX_NUM_TRACE_POINTS];
 } ipc_results_t;
 
 static inline bool results_stable(ccnt_t *array, size_t size)

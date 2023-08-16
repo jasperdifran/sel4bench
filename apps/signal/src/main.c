@@ -22,10 +22,42 @@
 
 #include <arch/signal.h>
 
+// #include <autoconf.h>
+// #include <sel4benchipc/gen_config.h>
+#include <allocman/vka.h>
+#include <allocman/bootstrap.h>
+#include <stdbool.h>
+// #include <stdio.h>
+#include <stddef.h>
+#include <stdlib.h>
+// #include <sel4/sel4.h>
+// #include <sel4bench/sel4bench.h>
+#include <sel4utils/process.h>
+#include <string.h>
+#include <utils/util.h>
+#include <vka/vka.h>
+// #include <sel4runtime.h>
+// #include <muslcsys/vsyscall.h>
+#include <utils/attribute.h>
+
+// #include <benchmark.h>
+#include <ipc.h>
+
+/* arch/ipc.h requires these defines */
+#define NOPS ""
+
+#include <sel4bench/kernel_logging.h>
+
+#include <arch/ipc.h>
+
 #define N_LO_SIGNAL_ARGS 4
 #define N_HI_SIGNAL_ARGS 3
 #define N_WAIT_ARGS 3
 #define MAX_ARGS 4
+
+#ifndef CONFIG_L1_DCACHE_SIZE
+#define CONFIG_L1_DCACHE_SIZE 0x8000
+#endif
 
 typedef struct helper_thread {
     sel4utils_thread_t thread;
@@ -34,6 +66,62 @@ typedef struct helper_thread {
     sel4utils_thread_entry_fn fn;
     seL4_Word argc;
 } helper_thread_t;
+
+#define DACHEPOLLUTION_SIZE 64000
+
+int *array;
+int **ptrs;
+
+void init_dcache_pollution(void)
+{
+    array = malloc(DACHEPOLLUTION_SIZE * sizeof(int));
+    ptrs = malloc(DACHEPOLLUTION_SIZE * sizeof(int *));
+}
+
+void pollute_dcache(void)
+{
+    for (int i = 0; i < DACHEPOLLUTION_SIZE; i++)
+    {
+        ptrs[i] = &array[i];
+    }
+
+    // shuffle the pointers
+    for (int i = 0; i < DACHEPOLLUTION_SIZE; i++)
+    {
+        int j = rand() % DACHEPOLLUTION_SIZE;
+        int *tmp = ptrs[i];
+        ptrs[i] = ptrs[j];
+        ptrs[j] = tmp;
+    }
+
+    // access the array through the shuffled pointers
+    for (int i = 0; i < DACHEPOLLUTION_SIZE; i++)
+    {
+        *ptrs[i] = i;
+    }
+}
+
+void pollute_icache(void)
+{
+    __asm__(".rept 64000\n\t"
+            "nop\n\t"
+            ".endr");
+}
+
+inline void dummy_cache_func(void)
+{
+}
+
+#if CONFIG_SIGNAL_DIRTY_L1_DCACHE
+#define L1_CACHE_LINE_SIZE BIT(CONFIG_L1_CACHE_LINE_SIZE_BITS)
+#define POLLUTE_ARRARY_SIZE CONFIG_L1_DCACHE_SIZE / L1_CACHE_LINE_SIZE / sizeof(int)
+#define POLLUTE_RUNS 5
+#define DCACHE_FUNC() pollute_dcache()
+#define ICACHE_FUNC() pollute_icache()
+#else
+#define DCACHE_FUNC dummy_cache_func
+#define ICACHE_FUNC dummy_cache_func
+#endif
 
 void abort(void)
 {
@@ -70,6 +158,8 @@ void low_prio_signal_fn(int argc, char **argv)
 
     for (int i = 0; i < N_RUNS; i++) {
         ccnt_t start;
+        DCACHE_FUNC();
+        ICACHE_FUNC();
         SEL4BENCH_READ_CCNT(start);
         DO_REAL_SIGNAL(ntfn);
         results[i] = (*end - start);
@@ -148,6 +238,29 @@ void high_prio_signal_fn(int argc, char **argv)
         results->hi_prio_results[i] = (end - start);
     }
 
+    // Measure flushing caches
+    for (int i = 0; i < N_RUNS; i++) {
+        ccnt_t start, end;
+        COMPILER_MEMORY_FENCE();
+        SEL4BENCH_READ_CCNT(start);
+        seL4_BenchmarkFlushCaches();
+        SEL4BENCH_READ_CCNT(end);
+        COMPILER_MEMORY_FENCE();
+        results->cache_flush_overhead[i] = (end - start);
+    }
+
+    for (int i = 0; i < N_RUNS; i++) {
+        ccnt_t start, end;
+        COMPILER_MEMORY_FENCE();
+        SEL4BENCH_READ_CCNT(start);
+        seL4_BenchmarkFlushCaches();
+        DCACHE_FUNC();
+        ICACHE_FUNC();
+        SEL4BENCH_READ_CCNT(end);
+        results->cache_overhead[i] = (end - start);
+        COMPILER_MEMORY_FENCE();
+    }
+
     /* now run an average benchmark and read the perf counters as well */
     seL4_Word n_counters = sel4bench_get_num_counters();
     ccnt_t start = 0;
@@ -157,17 +270,24 @@ void high_prio_signal_fn(int argc, char **argv)
     for (int j = 0; j < N_RUNS; j++) {
         for (seL4_Word chunk = 0; chunk < sel4bench_get_num_generic_counter_chunks(n_counters); chunk++) {
             COMPILER_MEMORY_FENCE();
+            seL4_BenchmarkFlushCaches();
+            COMPILER_MEMORY_FENCE();
+            DCACHE_FUNC();
+            ICACHE_FUNC();
+            COMPILER_MEMORY_FENCE();
             counter_bitfield_t mask = sel4bench_enable_generic_counters(chunk, n_counters);
             SEL4BENCH_READ_CCNT(start);
-            for (int i = 0; i < AVERAGE_RUNS; i++) {
+            // for (int i = 0; i < 1; i++) {
                 DO_REAL_SIGNAL(ntfn);
-            }
+            // }
             SEL4BENCH_READ_CCNT(end);
             sel4bench_read_and_stop_counters(mask, chunk, n_counters, results->hi_prio_average[j]);
             results->hi_prio_average[j][CYCLE_COUNT_EVENT] = end - start;
             COMPILER_MEMORY_FENCE();
         }
     }
+
+
 
     /* signal completion */
     seL4_Send(done_ep, seL4_MessageInfo_new(0, 0, 0, 0));
@@ -194,7 +314,7 @@ static void stop_threads(helper_thread_t *first, helper_thread_t *second)
     assert(error == seL4_NoError);
 }
 
-static void benchmark(env_t *env, seL4_CPtr ep, seL4_CPtr ntfn, signal_results_t *results)
+static void benchmark(env_t *env, seL4_CPtr ep, seL4_CPtr ntfn, signal_results_t *results, kernel_log_entry_t *kernel_log_buffer)
 {
     helper_thread_t wait = {
         .argc = N_WAIT_ARGS,
@@ -311,6 +431,22 @@ int main(int argc, char **argv)
 
     sel4bench_init();
 
+    init_dcache_pollution();
+
+    vka_object_t kernel_log_frame;
+    if (vka_alloc_frame(&env->slab_vka, seL4_LargePageBits, &kernel_log_frame) != 0)
+    {
+        ZF_LOGF("Failed to allocate ipc buffer");
+    }
+
+    if (kernel_logging_set_log_buffer(kernel_log_frame.cptr) != 0)
+    {
+        ZF_LOGF("Failed to set kernel log buffer");
+    }
+
+    void *log_buffer = vspace_map_pages(&env->vspace, &kernel_log_frame.cptr, NULL, seL4_AllRights, 1, seL4_LargePageBits, 1);
+    kernel_log_entry_t *kernel_log_buffer = (kernel_log_entry_t *)log_buffer;
+
     error = vka_alloc_endpoint(&env->slab_vka, &done_ep);
     assert(error == seL4_NoError);
 
@@ -330,7 +466,28 @@ int main(int argc, char **argv)
     */
     results->overhead_min = getMinOverhead(results->overhead, N_RUNS);
 
-    benchmark(env, done_ep.cptr, ntfn.cptr, results);
+    kernel_logging_reset_log();
+
+    benchmark(env, done_ep.cptr, ntfn.cptr, results, kernel_log_buffer);
+
+    unsigned long events = kernel_logging_finalize_log();
+    printf("%d events from this run\n", events);
+
+    // process_trace_points(kernel_log_buffer, results, events, i);
+
+    for (int i = 0; i < MIN((seL4_LargePageBits / sizeof(benchmark_tracepoint_log_entry_t)), events); i++)
+    {
+
+        seL4_Word id = kernel_logging_entry_get_key(&kernel_log_buffer[i]);
+        seL4_Word value = kernel_logging_entry_get_data(&kernel_log_buffer[i]);
+
+        if (results->kernel_traces[id] < value)
+        {
+            results->kernel_traces[id] = value;
+        }
+
+        // results->kernel_traces[0][i] = value;
+    }
 
     /* done -> results are stored in shared memory so we can now return */
     benchmark_finished(EXIT_SUCCESS);

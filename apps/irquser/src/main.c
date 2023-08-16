@@ -26,6 +26,14 @@
 
 #define INTERRUPT_PERIOD_NS (10 * NS_IN_MS)
 
+#ifndef CONFIG_L1_DCACHE_SIZE
+#define CONFIG_L1_DCACHE_SIZE 0x8000
+#endif
+
+#define L1_CACHE_LINE_SIZE BIT(CONFIG_L1_CACHE_LINE_SIZE_BITS)
+#define POLLUTE_ARRARY_SIZE CONFIG_L1_DCACHE_SIZE / L1_CACHE_LINE_SIZE / sizeof(int)
+#define POLLUTE_RUNS 5
+
 void abort(void)
 {
     benchmark_finished(EXIT_FAILURE);
@@ -46,6 +54,46 @@ void spinner_fn(int argc, char **argv)
     }
 }
 
+static inline void dummy_cache_func(void) {}
+
+void pollute_dcache(void)
+{
+    ALIGN(L1_CACHE_LINE_SIZE)
+    volatile int pollute_array[POLLUTE_ARRARY_SIZE][L1_CACHE_LINE_SIZE];
+    for (int i = 0; i < POLLUTE_RUNS; i++)
+    {
+        for (int j = 0; j < L1_CACHE_LINE_SIZE; j++)
+        {
+            for (int k = 0; k < POLLUTE_ARRARY_SIZE; k++)
+            {
+                pollute_array[k][j]++;
+            }
+        }
+    }
+}
+
+void pollute_icache(void)
+{
+    __asm__(".rept 64000\n\t"
+            "nop\n\t"
+            ".endr");
+}
+
+void cache_func() {
+    COMPILER_MEMORY_FENCE();
+    seL4_BenchmarkFlushCaches();
+    COMPILER_MEMORY_FENCE();
+    pollute_dcache();
+    pollute_icache();
+}
+
+
+#if CONFIG_IRQ_USER_DIRTY_L1_DCACHE
+#define CACHE_FUNC cache_func
+#else
+#define CACHE_FUNC dummy_cache_func
+#endif
+
 /* ep for ticker to Send on when done */
 static seL4_CPtr done_ep;
 /* ntfn for ticker to wait for timer irqs on */
@@ -63,6 +111,7 @@ void ticker_fn(ccnt_t *results, volatile ccnt_t *current_time)
 
     for (int i = 0; i < N_RUNS; i++) {
         /* wait for irq */
+        cache_func();
         seL4_Wait(timer_signal, &badge);
         /* record result */
         SEL4BENCH_READ_CCNT(end);
@@ -94,6 +143,7 @@ void ticker_fn_ep(int argc, char **argv)
 
     for (seL4_Word i = 0; i < N_RUNS; i++) {
         /* wait for irq */
+        cache_func();
         seL4_Wait(timer_signal, &badge);
         /* record result */
         SEL4BENCH_READ_CCNT(end);
@@ -137,9 +187,10 @@ int main(int argc, char **argv)
     vka_object_t endpoint = {0};
 
     benchmark_init_timer(env);
-    results = (irquser_results_t *) env->results;
+    results = (irquser_results_t *)env->results;
 
-    if (vka_alloc_endpoint(&env->slab_vka, &endpoint) != 0) {
+    if (vka_alloc_endpoint(&env->slab_vka, &endpoint) != 0)
+    {
         ZF_LOGF("Failed to allocate endpoint\n");
     }
 
@@ -161,7 +212,8 @@ int main(int argc, char **argv)
 
     /* measurement overhead */
     ccnt_t start, end;
-    for (int i = 0; i < N_RUNS; i++) {
+    for (int i = 0; i < N_RUNS; i++)
+    {
         SEL4BENCH_READ_CCNT(start);
         SEL4BENCH_READ_CCNT(end);
         results->overheads[i] = end - start;
@@ -171,8 +223,9 @@ int main(int argc, char **argv)
     results->overhead_min = getMinOverhead(results->overheads, N_RUNS);
 
     /* create a frame for the shared time variable so we can share it between processes */
-    ccnt_t *local_current_time = (ccnt_t *) vspace_new_pages(&env->vspace, seL4_AllRights, 1, seL4_PageBits);
-    if (local_current_time == NULL) {
+    ccnt_t *local_current_time = (ccnt_t *)vspace_new_pages(&env->vspace, seL4_AllRights, 1, seL4_PageBits);
+    if (local_current_time == NULL)
+    {
         ZF_LOGF("Failed to allocate page");
     }
 
@@ -180,18 +233,19 @@ int main(int argc, char **argv)
     benchmark_configure_thread(env, endpoint.cptr, seL4_MaxPrio - 1, "ticker", &ticker);
     benchmark_configure_thread(env, endpoint.cptr, seL4_MaxPrio - 2, "spinner", &spinner);
 
-    error = sel4utils_start_thread(&ticker, (sel4utils_thread_entry_fn) ticker_fn, (void *) results->thread_results,
-                                   (void *) local_current_time, true);
-    if (error) {
+    error = sel4utils_start_thread(&ticker, (sel4utils_thread_entry_fn)ticker_fn, (void *)results->thread_results,
+                                    (void *)local_current_time, true);
+    if (error)
+    {
         ZF_LOGF("Failed to start ticker");
     }
 
     char strings[1][WORD_STRING_SIZE];
     char *spinner_argv[1];
 
-    sel4utils_create_word_args(strings, spinner_argv, 1, (seL4_Word) local_current_time);
-    error = sel4utils_start_thread(&spinner, (sel4utils_thread_entry_fn) spinner_fn, (void *) 1, (void *) spinner_argv,
-                                   true);
+    sel4utils_create_word_args(strings, spinner_argv, 1, (seL4_Word)local_current_time);
+    error = sel4utils_start_thread(&spinner, (sel4utils_thread_entry_fn)spinner_fn, (void *)1, (void *)spinner_argv,
+                                    true);
     assert(!error);
 
     benchmark_wait_children(endpoint.cptr, "child of irq-user", 1);
@@ -206,17 +260,18 @@ int main(int argc, char **argv)
     /* run the benchmark again with early processing */
     char ticker_ep_strings[5][WORD_STRING_SIZE];
     char *ticker_ep_argv[5];
-    sel4utils_create_word_args(ticker_ep_strings, ticker_ep_argv, 5, (seL4_Word) results->overhead_min,
-                               &results->thread_results_ep_sum,
-                               &results->thread_results_ep_sum2, &results->thread_results_ep_num, (seL4_Word) local_current_time);
-    error = sel4utils_start_thread(&ticker, (sel4utils_thread_entry_fn) ticker_fn_ep, (void *) 5, (void *) ticker_ep_argv,
-                                   true);
-    if (error) {
+    sel4utils_create_word_args(ticker_ep_strings, ticker_ep_argv, 5, (seL4_Word)results->overhead_min,
+                                &results->thread_results_ep_sum,
+                                &results->thread_results_ep_sum2, &results->thread_results_ep_num, (seL4_Word)local_current_time);
+    error = sel4utils_start_thread(&ticker, (sel4utils_thread_entry_fn)ticker_fn_ep, (void *)5, (void *)ticker_ep_argv,
+                                    true);
+    if (error)
+    {
         ZF_LOGF("Failed to start ticker");
     }
 
-    error = sel4utils_start_thread(&spinner, (sel4utils_thread_entry_fn) spinner_fn, (void *) 1, (void *) spinner_argv,
-                                   true);
+    error = sel4utils_start_thread(&spinner, (sel4utils_thread_entry_fn)spinner_fn, (void *)1, (void *)spinner_argv,
+                                    true);
     assert(!error);
 
     benchmark_wait_children(endpoint.cptr, "child of irq-user", 1);
@@ -230,9 +285,16 @@ int main(int argc, char **argv)
 
     /* now run the benchmark again, but run the spinner in another address space */
 
+
+
+
+
+
+
+
     /* restart ticker */
-    error = sel4utils_start_thread(&ticker, (sel4utils_thread_entry_fn) ticker_fn, (void *) results->process_results,
-                                   (void *) local_current_time, true);
+    error = sel4utils_start_thread(&ticker, (sel4utils_thread_entry_fn)ticker_fn, (void *)results->process_results,
+                                    (void *)local_current_time, true);
     assert(!error);
 
     sel4utils_process_t spinner_process;
@@ -245,9 +307,10 @@ int main(int argc, char **argv)
     assert(current_time_remote != NULL);
 
     /* start the spinner process */
-    sel4utils_create_word_args(strings, spinner_argv, 1, (seL4_Word) current_time_remote);
+    sel4utils_create_word_args(strings, spinner_argv, 1, (seL4_Word)current_time_remote);
     error = benchmark_spawn_process(&spinner_process, &env->slab_vka, &env->vspace, 1, spinner_argv, 1);
-    if (error) {
+    if (error)
+    {
         ZF_LOGF("Failed to start spinner process");
     }
 
@@ -260,18 +323,25 @@ int main(int argc, char **argv)
     error = seL4_TCB_Suspend(ticker.tcb.cptr);
     assert(error == seL4_NoError);
 
+
+
+
+
+
+
     /* run the benchmark again but with early processing */
-    sel4utils_create_word_args(ticker_ep_strings, ticker_ep_argv, 5, (seL4_Word) results->overhead_min,
-                               &results->process_results_ep_sum,
-                               &results->process_results_ep_sum2, &results->process_results_ep_num, (seL4_Word) local_current_time);
-    error = sel4utils_start_thread(&ticker, (sel4utils_thread_entry_fn) ticker_fn_ep, (void *) 5, (void *) ticker_ep_argv,
-                                   true);
+    sel4utils_create_word_args(ticker_ep_strings, ticker_ep_argv, 5, (seL4_Word)results->overhead_min,
+                                &results->process_results_ep_sum,
+                                &results->process_results_ep_sum2, &results->process_results_ep_num, (seL4_Word)local_current_time);
+    error = sel4utils_start_thread(&ticker, (sel4utils_thread_entry_fn)ticker_fn_ep, (void *)5, (void *)ticker_ep_argv,
+                                    true);
     assert(!error);
 
     /* start the spinner process */
-    sel4utils_create_word_args(strings, spinner_argv, 1, (seL4_Word) current_time_remote);
+    sel4utils_create_word_args(strings, spinner_argv, 1, (seL4_Word)current_time_remote);
     error = benchmark_spawn_process(&spinner_process, &env->slab_vka, &env->vspace, 1, spinner_argv, 1);
-    if (error) {
+    if (error)
+    {
         ZF_LOGF("Failed to start spinner process");
     }
 

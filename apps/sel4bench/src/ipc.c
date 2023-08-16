@@ -112,6 +112,22 @@ static json_t *process_ipc_results(void *r)
 
     json_t *array = json_array();
     json_array_append_new(array, result_set_to_json(result_set));
+
+    result_t tracepoint_results[CONFIG_MAX_NUM_TRACE_POINTS];
+    result_set_t trace_result_set = {
+        .name = "Trace point results",
+        .results = tracepoint_results,
+        .n_results = CONFIG_MAX_NUM_TRACE_POINTS,
+    };
+
+    for (int i = 0; i < CONFIG_MAX_NUM_TRACE_POINTS; i++) {
+        tracepoint_results[i] = process_result(1, &raw_results->kernel_traces[i], (result_desc_t) {
+                                       .name = "trace",
+                                       .overhead = 0,
+                                   });
+    }
+
+    json_array_append_new(array, result_set_to_json(trace_result_set));
     return array;
 }
 

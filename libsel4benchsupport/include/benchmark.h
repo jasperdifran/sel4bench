@@ -24,7 +24,8 @@
 /* average events = sel4bench generic events + the cycle counter */
 #define NUM_AVERAGE_EVENTS (SEL4BENCH_NUM_GENERIC_EVENTS + 1u)
 #define CYCLE_COUNT_EVENT SEL4BENCH_NUM_GENERIC_EVENTS
-#define AVERAGE_RUNS 10000
+// #define AVERAGE_RUNS 10000
+#define AVERAGE_RUNS 1
 
 #define MAX_TIMER_IRQS 4
 

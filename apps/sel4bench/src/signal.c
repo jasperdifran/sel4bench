@@ -49,6 +49,18 @@ static json_t *signal_process(void *results)
     result = process_result(N_RUNS, raw_results->hi_prio_results, desc);
     set.name = "Signal to low prio thread";
     json_array_append_new(array, result_set_to_json(set));
+    
+    result = process_result(N_RUNS, raw_results->cache_overhead, desc);
+    set.name = "Signal cache func overhead";
+    json_array_append_new(array, result_set_to_json(set));
+
+    result = process_result(N_RUNS, raw_results->cache_flush_overhead, desc);
+    set.name = "Signal cache flush func overhead";
+    json_array_append_new(array, result_set_to_json(set));
+
+    result = process_result(CONFIG_MAX_NUM_TRACE_POINTS, raw_results->kernel_traces, desc);
+    set.name  = "Kernel trace";
+    json_array_append_new(array, result_set_to_json(set));
 
     result_t average_results[NUM_AVERAGE_EVENTS];
     process_average_results(N_RUNS, NUM_AVERAGE_EVENTS, raw_results->hi_prio_average, average_results);

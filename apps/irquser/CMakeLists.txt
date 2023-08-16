@@ -18,6 +18,22 @@ config_option(
     DEPENDS
     "DefaultBenchDeps"
 )
+
+if (KernelArchArm)
+    config_set(L1DCacheSize L1_DCACHE_SIZE "0x8000")
+endif()
+
+config_choice(
+    IrqUserCacheToMeasure
+    IRQUSER_CACHE_TO_MEASURE
+    "cache to measure"
+    "Hot Cache;IrqUser_HotCache;HOT_CACHE;AppIrqUserBench"
+    "Clean L1 ICache;IrqUser_CleanL1ICache;CLEAN_L1_ICACHE;AppIrqUserBench;KernelArchARM;NOT AppSmpBench"
+    "Clean L1 DCache;IrqUser_CleanL1DCache;CLEAN_L1_DCACHE;AppIrqUserBench;KernelArchARM;NOT AppSmpBench"
+    "Clean L1 IDCache;IrqUser_CleanL1IDCache;CLEAN_L1_IDCACHE;AppIrqUserBench;KernelArchARM;NOT AppSmpBench"
+    "IRQ User Dirty L1 DCache;IrqUser_DirtyL1DCache;IRQ_USER_DIRTY_L1_DCACHE;AppIrqUserBench;L1DCacheSize"
+)
+
 add_config_library(sel4benchirquser "${configure_string}")
 
 file(GLOB deps src/*.c)

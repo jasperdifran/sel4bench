@@ -17,6 +17,8 @@ typedef struct signal_results {
     ccnt_t hi_prio_results[N_RUNS];
     ccnt_t hi_prio_average[N_RUNS][NUM_AVERAGE_EVENTS];
     ccnt_t overhead[N_RUNS]; /* "overhead" is used by early processing as well */
+    ccnt_t cache_overhead[N_RUNS];
+    ccnt_t cache_flush_overhead[N_RUNS];
     /* Data for early processing */
     ccnt_t lo_sum; /* sum of samples */
     ccnt_t lo_sum2; /* sum of squared samples */
@@ -25,4 +27,5 @@ typedef struct signal_results {
     /* array required by report output function
     Zeros, but can be used for diagnostic data */
     ccnt_t diag_results[N_RUNS]; /* array required by report output function */
+    ccnt_t kernel_traces[CONFIG_MAX_NUM_TRACE_POINTS];
 } signal_results_t;

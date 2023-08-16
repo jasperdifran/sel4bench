@@ -89,6 +89,8 @@ if(NOT Sel4benchAllowSettingsOverride)
         # The VCPU benchmarks require the kernel entry and exit timestamp feature.
         set(AppVcpuBench ON CACHE BOOL "" FORCE)
         set(KernelBenchmarks "track_kernel_entries" CACHE STRING "" FORCE)
+    elseif(CUSTOMBENCH)
+        set(AppHardwareBench OFF CACHE BOOL "" FORCE)
     else()
         set(KernelBenchmarks "none" CACHE STRING "" FORCE)
         set(AppHardwareBench OFF CACHE BOOL "" FORCE)

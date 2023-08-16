@@ -28,6 +28,8 @@
 #include <benchmark.h>
 #include <ipc.h>
 
+#include <sel4bench/kernel_logging.h>
+
 /* arch/ipc.h requires these defines */
 #define NOPS ""
 
@@ -36,11 +38,12 @@
 #define NUM_ARGS 3
 /* Ensure that enough warmups are performed to prevent the FPU from
  * being restored. */
-#ifdef CONFIG_FPU_MAX_RESTORES_SINCE_SWITCH
-#define WARMUPS (RUNS + CONFIG_FPU_MAX_RESTORES_SINCE_SWITCH)
-#else
-#define WARMUPS RUNS
-#endif
+#define WARMUPS (1)
+// #ifdef CONFIG_FPU_MAX_RESTORES_SINCE_SWITCH
+// #define WARMUPS (RUNS + CONFIG_FPU_MAX_RESTORES_SINCE_SWITCH)
+// #else
+// #define WARMUPS RUNS
+// #endif
 #define OVERHEAD_RETRIES 4
 
 #ifndef CONFIG_CYCLE_COUNT
@@ -60,6 +63,31 @@ typedef struct helper_thread {
     char argv_strings[NUM_ARGS][WORD_STRING_SIZE];
 } helper_thread_t;
 
+#define DCACHEPOLLUTION_SIZE 64000
+
+#define L1_CACHE_LINE_SIZE BIT(CONFIG_L1_CACHE_LINE_SIZE_BITS)
+#define POLLUTE_ARRARY_SIZE CONFIG_L1_DCACHE_SIZE / L1_CACHE_LINE_SIZE / sizeof(int)
+#define POLLUTE_RUNS 5
+
+// int array[DCACHEPOLLUTION_SIZE];
+// int *ptrs[DCACHEPOLLUTION_SIZE];
+
+int *array;
+int **ptrs;
+int started = 0;
+
+void init_dcache_pollution(void)
+{
+    array = malloc(DCACHEPOLLUTION_SIZE * sizeof(int));
+    ptrs = malloc(DCACHEPOLLUTION_SIZE * sizeof(int *));
+}
+
+void deinit_dcache_pollution(void)
+{
+    free(array);
+    free(ptrs);
+}
+
 void abort(void)
 {
     benchmark_finished(EXIT_FAILURE);
@@ -68,6 +96,10 @@ void abort(void)
 static void timing_init(void)
 {
     sel4bench_init();
+    // if (!started) {
+    //     init_dcache_pollution();
+    //     started = 1;
+    // }
 #ifdef CONFIG_GENERIC_COUNTER
     event_id_t event = GENERIC_EVENTS[CONFIG_GENERIC_COUNTER_ID];
     sel4bench_set_count_event(0, event);
@@ -83,6 +115,7 @@ static void timing_init(void)
 
 void timing_destroy(void)
 {
+    // deinit_dcache_pollution();
 #ifdef CONFIG_GENERIC_COUNTER
     sel4bench_stop_counters(GENERIC_COUNTER_MASK);
     sel4bench_destroy();
@@ -106,7 +139,60 @@ static inline void dummy_seL4_Reply(UNUSED seL4_CPtr reply, seL4_MessageInfo_t t
     (void)tag;
 }
 
-static inline void dummy_cache_func(void) {}
+static inline void dummy_cache_func(void) {
+}
+
+void pollute_dcache(void)
+{
+    // for (int i = 0; i < DCACHEPOLLUTION_SIZE; i++)
+    // {
+    //     ptrs[i] = &array[i];
+    // }
+
+    // // shuffle the pointers
+    // for (int i = 0; i < DCACHEPOLLUTION_SIZE; i++)
+    // {
+    //     int j = rand() % DCACHEPOLLUTION_SIZE;
+    //     int *tmp = ptrs[i];
+    //     ptrs[i] = ptrs[j];
+    //     ptrs[j] = tmp;
+    // }
+
+    // // access the array through the shuffled pointers
+    // for (int i = 0; i < DCACHEPOLLUTION_SIZE; i++)
+    // {
+    //     *ptrs[i] = i;
+    // }
+
+        ALIGN(L1_CACHE_LINE_SIZE)                                            
+        volatile int pollute_array[POLLUTE_ARRARY_SIZE][L1_CACHE_LINE_SIZE];
+        for (int i = 0; i < POLLUTE_RUNS; i++)                               
+        {                                                                    
+            for (int j = 0; j < L1_CACHE_LINE_SIZE; j++)                     
+            {                                                                
+                for (int k = 0; k < POLLUTE_ARRARY_SIZE; k++)                
+                {                                                            
+                    pollute_array[k][j]++;                                   
+                }                                                            
+            }                                                                
+        }                                                                    
+}
+void pollute_icache(void)
+{
+    __asm__(".rept 64000\n\t"
+            "nop\n\t"
+            ".endr");
+}
+
+void real_cache_func(void)
+{
+    COMPILER_MEMORY_FENCE();
+    seL4_BenchmarkFlushCaches();
+    COMPILER_MEMORY_FENCE();
+    pollute_dcache();
+    pollute_icache();
+    COMPILER_MEMORY_FENCE();
+}
 
 #ifdef CONFIG_CLEAN_L1_ICACHE
 #define CACHE_FUNC() do {                           \
@@ -124,20 +210,10 @@ static inline void dummy_cache_func(void) {}
 } while (0)
 
 #elif CONFIG_DIRTY_L1_DCACHE
-#define L1_CACHE_LINE_SIZE BIT(CONFIG_L1_CACHE_LINE_SIZE_BITS)
-#define POLLUTE_ARRARY_SIZE CONFIG_L1_DCACHE_SIZE/L1_CACHE_LINE_SIZE/sizeof(int)
-#define POLLUTE_RUNS 5
-#define CACHE_FUNC() do {                                       \
-    ALIGN(L1_CACHE_LINE_SIZE) volatile                          \
-    int pollute_array[POLLUTE_ARRARY_SIZE][L1_CACHE_LINE_SIZE]; \
-    for (int i = 0; i < POLLUTE_RUNS; i++) {                    \
-        for (int j = 0; j < L1_CACHE_LINE_SIZE; j++) {          \
-            for (int k = 0; k < POLLUTE_ARRARY_SIZE; k++) {     \
-                pollute_array[k][j]++;                          \
-            }                                                   \
-        }                                                       \
-    }                                                           \
-} while (0)
+// #define L1_CACHE_LINE_SIZE BIT(CONFIG_L1_CACHE_LINE_SIZE_BITS)
+// #define POLLUTE_ARRARY_SIZE CONFIG_L1_DCACHE_SIZE/L1_CACHE_LINE_SIZE/sizeof(int)
+// #define POLLUTE_RUNS 5
+#define CACHE_FUNC real_cache_func
 
 #else
 #define CACHE_FUNC dummy_cache_func
@@ -145,26 +221,26 @@ static inline void dummy_cache_func(void) {}
 
 seL4_Word ipc_call_func(int argc, char *argv[]);
 seL4_Word ipc_call_func2(int argc, char *argv[]);
-seL4_Word ipc_call_10_func(int argc, char *argv[]);
-seL4_Word ipc_call_10_func2(int argc, char *argv[]);
+// seL4_Word ipc_call_10_func(int argc, char *argv[]);
+// seL4_Word ipc_call_10_func2(int argc, char *argv[]);
 seL4_Word ipc_replyrecv_func2(int argc, char *argv[]);
 seL4_Word ipc_replyrecv_func(int argc, char *argv[]);
-seL4_Word ipc_replyrecv_10_func2(int argc, char *argv[]);
-seL4_Word ipc_replyrecv_10_func(int argc, char *argv[]);
-seL4_Word ipc_send_func(int argc, char *argv[]);
-seL4_Word ipc_recv_func(int argc, char *argv[]);
+// seL4_Word ipc_replyrecv_10_func2(int argc, char *argv[]);
+// seL4_Word ipc_replyrecv_10_func(int argc, char *argv[]);
+// seL4_Word ipc_send_func(int argc, char *argv[]);
+// seL4_Word ipc_recv_func(int argc, char *argv[]);
 
 static helper_func_t bench_funcs[] = {
     ipc_call_func,
     ipc_call_func2,
-    ipc_call_10_func,
-    ipc_call_10_func2,
+    // ipc_call_10_func,
+    // ipc_call_10_func2,
     ipc_replyrecv_func2,
     ipc_replyrecv_func,
-    ipc_replyrecv_10_func2,
-    ipc_replyrecv_10_func,
-    ipc_send_func,
-    ipc_recv_func
+    // ipc_replyrecv_10_func2,
+    // ipc_replyrecv_10_func,
+    // ipc_send_func,
+    // ipc_recv_func
 };
 
 #define IPC_CALL_FUNC(name, bench_func, send_func, call_func, send_start_end, length, cache_func) \
@@ -191,8 +267,8 @@ static helper_func_t bench_funcs[] = {
 
 IPC_CALL_FUNC(ipc_call_func, DO_REAL_CALL, seL4_Send, dummy_seL4_Call, end, 0, dummy_cache_func)
 IPC_CALL_FUNC(ipc_call_func2, DO_REAL_CALL, dummy_seL4_Send, seL4_Call, start, 0, CACHE_FUNC)
-IPC_CALL_FUNC(ipc_call_10_func, DO_REAL_CALL_10, seL4_Send, dummy_seL4_Call, end, 10, dummy_cache_func)
-IPC_CALL_FUNC(ipc_call_10_func2, DO_REAL_CALL_10, dummy_seL4_Send, seL4_Call, start, 10, CACHE_FUNC)
+// IPC_CALL_FUNC(ipc_call_10_func, DO_REAL_CALL_10, seL4_Send, dummy_seL4_Call, end, 10, dummy_cache_func)
+// IPC_CALL_FUNC(ipc_call_10_func2, DO_REAL_CALL_10, dummy_seL4_Send, seL4_Call, start, 10, CACHE_FUNC)
 
 #define IPC_REPLY_RECV_FUNC(name, bench_func, reply_func, recv_func, send_start_end, length, cache_func) \
 seL4_Word name(int argc, char *argv[]) { \
@@ -223,48 +299,48 @@ seL4_Word name(int argc, char *argv[]) { \
 
 IPC_REPLY_RECV_FUNC(ipc_replyrecv_func2, DO_REAL_REPLY_RECV, api_reply, api_recv, end, 0, dummy_cache_func)
 IPC_REPLY_RECV_FUNC(ipc_replyrecv_func, DO_REAL_REPLY_RECV, dummy_seL4_Reply, api_recv, start, 0, CACHE_FUNC)
-IPC_REPLY_RECV_FUNC(ipc_replyrecv_10_func2, DO_REAL_REPLY_RECV_10, api_reply, api_recv, end, 10, dummy_cache_func)
-IPC_REPLY_RECV_FUNC(ipc_replyrecv_10_func, DO_REAL_REPLY_RECV_10, dummy_seL4_Reply, api_recv, start, 10, CACHE_FUNC)
+// IPC_REPLY_RECV_FUNC(ipc_replyrecv_10_func2, DO_REAL_REPLY_RECV_10, api_reply, api_recv, end, 10, dummy_cache_func)
+// IPC_REPLY_RECV_FUNC(ipc_replyrecv_10_func, DO_REAL_REPLY_RECV_10, dummy_seL4_Reply, api_recv, start, 10, CACHE_FUNC)
 
-seL4_Word
-ipc_recv_func(int argc, char *argv[])
-{
-    uint32_t i;
-    ccnt_t start UNUSED, end UNUSED;
-    seL4_CPtr ep = atoi(argv[0]);
-    seL4_CPtr result_ep = atoi(argv[1]);
-    UNUSED seL4_CPtr reply = atoi(argv[2]);
+// seL4_Word
+// ipc_recv_func(int argc, char *argv[])
+// {
+//     uint32_t i;
+//     ccnt_t start UNUSED, end UNUSED;
+//     seL4_CPtr ep = atoi(argv[0]);
+//     seL4_CPtr result_ep = atoi(argv[1]);
+//     UNUSED seL4_CPtr reply = atoi(argv[2]);
 
-    COMPILER_MEMORY_FENCE();
-    for (i = 0; i < WARMUPS; i++) {
-        READ_COUNTER_BEFORE(start);
-        DO_REAL_RECV(ep, reply);
-        READ_COUNTER_AFTER(end);
-    }
-    COMPILER_MEMORY_FENCE();
-    DO_REAL_RECV(ep, reply);
-    send_result(result_ep, end);
-    return 0;
-}
+//     COMPILER_MEMORY_FENCE();
+//     for (i = 0; i < WARMUPS; i++) {
+//         READ_COUNTER_BEFORE(start);
+//         DO_REAL_RECV(ep, reply);
+//         READ_COUNTER_AFTER(end);
+//     }
+//     COMPILER_MEMORY_FENCE();
+//     DO_REAL_RECV(ep, reply);
+//     send_result(result_ep, end);
+//     return 0;
+// }
 
-seL4_Word ipc_send_func(int argc, char *argv[])
-{
-    uint32_t i;
-    ccnt_t start UNUSED, end UNUSED;
-    seL4_CPtr ep = atoi(argv[0]);
-    seL4_CPtr result_ep = atoi(argv[1]);
-    seL4_MessageInfo_t tag = seL4_MessageInfo_new(0, 0, 0, 0);
-    COMPILER_MEMORY_FENCE();
-    for (i = 0; i < WARMUPS; i++) {
-        READ_COUNTER_BEFORE(start);
-        DO_REAL_SEND(ep, tag);
-        READ_COUNTER_AFTER(end);
-    }
-    COMPILER_MEMORY_FENCE();
-    send_result(result_ep, start);
-    DO_REAL_SEND(ep, tag);
-    return 0;
-}
+// seL4_Word ipc_send_func(int argc, char *argv[])
+// {
+//     uint32_t i;
+//     ccnt_t start UNUSED, end UNUSED;
+//     seL4_CPtr ep = atoi(argv[0]);
+//     seL4_CPtr result_ep = atoi(argv[1]);
+//     seL4_MessageInfo_t tag = seL4_MessageInfo_new(0, 0, 0, 0);
+//     COMPILER_MEMORY_FENCE();
+//     for (i = 0; i < WARMUPS; i++) {
+//         READ_COUNTER_BEFORE(start);
+//         DO_REAL_SEND(ep, tag);
+//         READ_COUNTER_AFTER(end);
+//     }
+//     COMPILER_MEMORY_FENCE();
+//     send_result(result_ep, start);
+//     DO_REAL_SEND(ep, tag);
+//     return 0;
+// }
 
 #define MEASURE_OVERHEAD(op, dest, decls) do { \
     uint32_t i; \
@@ -297,18 +373,19 @@ static void measure_overhead(ipc_results_t *results)
     MEASURE_OVERHEAD(DO_NOP_REPLY_RECV(0, tag, 0),
                      results->overhead_benchmarks[REPLY_RECV_OVERHEAD],
                      seL4_MessageInfo_t tag = seL4_MessageInfo_new(0, 0, 0, 0));
-    MEASURE_OVERHEAD(DO_NOP_SEND(0, tag),
-                     results->overhead_benchmarks[SEND_OVERHEAD],
-                     seL4_MessageInfo_t tag = seL4_MessageInfo_new(0, 0, 0, 0));
-    MEASURE_OVERHEAD(DO_NOP_RECV(0, 0),
-                     results->overhead_benchmarks[RECV_OVERHEAD],
-                     {});
-    MEASURE_OVERHEAD(DO_NOP_CALL_10(0, tag10),
-                     results->overhead_benchmarks[CALL_10_OVERHEAD],
-                     seL4_MessageInfo_t tag10 = seL4_MessageInfo_new(0, 0, 0, 10));
-    MEASURE_OVERHEAD(DO_NOP_REPLY_RECV_10(0, tag10, 0),
-                     results->overhead_benchmarks[REPLY_RECV_10_OVERHEAD],
-                     seL4_MessageInfo_t tag10 = seL4_MessageInfo_new(0, 0, 0, 10));
+    
+    // MEASURE_OVERHEAD(DO_NOP_SEND(0, tag),
+    //                  results->overhead_benchmarks[SEND_OVERHEAD],
+    //                  seL4_MessageInfo_t tag = seL4_MessageInfo_new(0, 0, 0, 0));
+    // MEASURE_OVERHEAD(DO_NOP_RECV(0, 0),
+    //                  results->overhead_benchmarks[RECV_OVERHEAD],
+    //                  {});
+    // MEASURE_OVERHEAD(DO_NOP_CALL_10(0, tag10),
+    //                  results->overhead_benchmarks[CALL_10_OVERHEAD],
+    //                  seL4_MessageInfo_t tag10 = seL4_MessageInfo_new(0, 0, 0, 10));
+    // MEASURE_OVERHEAD(DO_NOP_REPLY_RECV_10(0, tag10, 0),
+    //                  results->overhead_benchmarks[REPLY_RECV_10_OVERHEAD],
+    //                  seL4_MessageInfo_t tag10 = seL4_MessageInfo_new(0, 0, 0, 10));
 }
 
 void run_bench(env_t *env, cspacepath_t result_ep_path, seL4_CPtr ep,
@@ -318,13 +395,12 @@ void run_bench(env_t *env, cspacepath_t result_ep_path, seL4_CPtr ep,
 {
 
     timing_init();
-
     /* start processes */
     int error = benchmark_spawn_process(&server->process, &env->slab_vka, &env->vspace, NUM_ARGS,
                                         server->argv, 1);
     ZF_LOGF_IF(error, "Failed to spawn server\n");
 
-    if (config_set(CONFIG_KERNEL_MCS) && params->server_fn != IPC_RECV_FUNC) {
+    if (config_set(CONFIG_KERNEL_MCS)) { // && params->server_fn != IPC_RECV_FUNC) {
         /* wait for server to tell us its initialised */
         seL4_Wait(ep, NULL);
 
@@ -342,7 +418,7 @@ void run_bench(env_t *env, cspacepath_t result_ep_path, seL4_CPtr ep,
     /* get results */
     *ret1 = get_result(result_ep_path.capPtr);
 
-    if (config_set(CONFIG_KERNEL_MCS) && params->server_fn != IPC_RECV_FUNC && params->passive) {
+    if (config_set(CONFIG_KERNEL_MCS) && /* params->server_fn != IPC_RECV_FUNC && */ params->passive) {
         /* convert server to active so it can send us the result */
         error = api_sc_bind(server->process.thread.sched_context.cptr,
                             server->process.thread.tcb.cptr);
@@ -378,6 +454,20 @@ void CONSTRUCTOR(MUSLCSYS_WITH_VSYSCALL_PRIORITY) init_env(void)
               object_freq
           );
 }
+
+
+
+// void process_trace_points(kernel_log_entry_t *src_results, ipc_results_t *dst_results, int num_entries, int offset)
+// {
+//     ccnt_t temp[9] = {0};
+//     for (int i = 0; i < num_entries; i++) {
+//         temp[kernel_logging_entry_get_key(&src_results[i])] = MAX(temp[kernel_logging_entry_get_key(&src_results[i])], kernel_logging_entry_get_data(&src_results[i]));
+//     }
+//     for (int i = 0; i < 9; i++) {
+//         dst_results->kernel_traces[i][offset] = temp[i];
+//     }
+    
+// }
 
 int main(int argc, char **argv)
 {
@@ -424,6 +514,18 @@ int main(int argc, char **argv)
     sel4utils_create_word_args(server_thread.argv_strings, server_thread.argv, NUM_ARGS,
                                server_thread.ep, server_thread.result_ep, SEL4UTILS_REPLY_SLOT);
 
+    vka_object_t kernel_log_frame;
+    if (vka_alloc_frame(&env->slab_vka, seL4_LargePageBits, &kernel_log_frame) != 0) {
+        ZF_LOGF("Failed to allocate ipc buffer");
+    }
+
+    if (kernel_logging_set_log_buffer(kernel_log_frame.cptr) != 0) {
+        ZF_LOGF("Failed to set kernel log buffer");
+    }
+
+    void *log_buffer = vspace_map_pages(&env->vspace, &kernel_log_frame.cptr, NULL, seL4_AllRights, 1, seL4_LargePageBits, 1);
+    kernel_log_entry_t *kernel_log_buffer = (kernel_log_entry_t *)log_buffer;
+
     /* run the benchmark */
     seL4_CPtr auth = simple_get_tcb(&env->simple);
     ccnt_t start, end;
@@ -466,6 +568,36 @@ int main(int argc, char **argv)
             }
         }
     }
+
+    
+    
+    // kernel_log_entry_t kernel_log_buffer[1000];
+    // if (kernel_logging_sync_log(log_buffer, kernel_log_buffer, 1000) != 1000)
+    // {
+    //     ZF_LOGF("Failed to sync kernel log");
+    // }
+
+    unsigned long events = kernel_logging_finalize_log();
+    printf("%d events from this run\n", events);
+
+    // process_trace_points(kernel_log_buffer, results, events, i);
+
+    for (int i = 0; i < events; i++) {
+
+        seL4_Word id = kernel_logging_entry_get_key(&kernel_log_buffer[i]);
+        seL4_Word value = kernel_logging_entry_get_data(&kernel_log_buffer[i]);
+
+        if (results->kernel_traces[id] < value) {
+            results->kernel_traces[id] = value;
+        }
+
+        // results->kernel_traces[0][i] = value;
+    }
+
+    // TODO defs need to be freeing things here
+    // vspace_unmap_pages(&env->vspace, log_buffer, 1, seL4_LargePageBits, VSPACE_PRESERVE);
+
+    // vka_free_object(&env->slab_vka, &kernel_log_frame);
 
     /* done -> results are stored in shared memory so we can now return */
     benchmark_finished(EXIT_SUCCESS);
